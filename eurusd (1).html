@@ -1,0 +1,558 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gráfico de Velas EUR/USD (5 minutos) com Volume, SMA e RSI</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            background-color: #f0f0f0;
+        }
+        .container {
+            background-color: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            text-align: center;
+            width: 90%;
+            max-width: 1200px;
+        }
+        .error {
+            color: red;
+            margin-bottom: 10px;
+        }
+        .loading {
+            color: #555;
+            margin-bottom: 10px;
+        }
+        .timestamp {
+            color: #333;
+            font-size: 14px;
+            margin-bottom: 10px;
+        }
+        canvas {
+            margin-top: 10px;
+            max-width: 100%;
+        }
+        #candlestickChart {
+            height: 400px;
+        }
+        #volumeChart {
+            height: 200px;
+            background-color: #f9f9f9;
+        }
+        #rsiChart {
+            height: 150px;
+            background-color: #f9f9f9;
+        }
+        button {
+            margin-top: 10px;
+            padding: 10px 20px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: center;
+        }
+        th {
+            background-color: #f2f2f2;
+        }
+    </style>
+    <script>
+        console.log('HTML e <head> carregados.');
+    </script>
+</head>
+<body>
+    <div class="container">
+        <h2>Gráfico de Velas EUR/USD (5 minutos) com Volume, SMA e RSI</h2>
+        <div id="timestamp" class="timestamp">Última consulta: Aguardando...</div>
+        <div id="loading" class="loading">Carregando dados...</div>
+        <div id="error" class="error" style="display: none;"></div>
+        <canvas id="candlestickChart"></canvas>
+        <canvas id="volumeChart"></canvas>
+        <canvas id="rsiChart"></canvas>
+        <button id="updateButton" onclick="fetchCandlestickData()">Atualizar Dados</button>
+        <p style="font-size: 12px; color: #555;">Use a roda do mouse para zoom e arraste para mover os gráficos. Clique em "Atualizar Dados" para recarregar a cada 5 minutos.</p>
+        <table id="candlesTable">
+            <thead>
+                <tr>
+                    <th>Horário</th>
+                    <th>Open (O)</th>
+                    <th>High (H)</th>
+                    <th>Low (L)</th>
+                    <th>Close (C)</th>
+                    <th>Cor</th>
+                    <th>Volume</th>
+                    <th>SMA 9</th>
+                    <th>SMA 21</th>
+                    <th>RSI</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/moment@2.30.1/min/moment.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/moment-timezone@0.5.45/builds/moment-timezone-with-data.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-moment@1.0.0/dist/chartjs-adapter-moment.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial@0.2.1/dist/chartjs-chart-financial.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+    <script>
+        console.log('Script JavaScript carregado.');
+        let isFetching = false;
+        let candlestickChartInstance = null;
+        let volumeChartInstance = null;
+        let rsiChartInstance = null;
+        let lastUpdateTime = new Date(); // Valor padrão como fallback
+
+        // Verificar carregamento das bibliotecas
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log('Moment.js carregado:', typeof moment !== 'undefined');
+            console.log('Chart.js carregado:', typeof Chart !== 'undefined');
+            console.log('chartjs-chart-financial carregado:', typeof Chart.controllers.financial !== 'undefined');
+            console.log('chartjs-plugin-zoom carregado:', typeof Chart.plugins.get('zoom') !== 'undefined');
+            if (typeof moment === 'undefined' || typeof Chart === 'undefined' || typeof Chart.controllers.financial === 'undefined' || typeof Chart.plugins.get('zoom') === 'undefined') {
+                console.error('Erro: Alguma biblioteca externa não foi carregada. Verifique a conexão com a internet ou os URLs das CDNs.');
+                document.getElementById('error').style.display = 'block';
+                document.getElementById('error').textContent = 'Erro: Falha ao carregar bibliotecas necessárias. Verifique a conexão e recarregue.';
+            }
+        });
+
+        function calculateSMA(data, period) {
+            console.log(`Calculando SMA para período ${period}...`);
+            const sma = [];
+            for (let i = 0; i < data.length; i++) {
+                if (i < period - 1 || !data[i] || !data[i].x || !data[i].c) {
+                    sma.push(null);
+                    continue;
+                }
+                const slice = data.slice(i - period + 1, i + 1);
+                const avg = slice.reduce((sum, item) => sum + item.c, 0) / period;
+                sma.push({ x: moment.tz(data[i].x, 'America/Sao_Paulo').toDate(), y: isNaN(avg) ? null : avg });
+            }
+            console.log(`SMA ${period} bruta:`, JSON.stringify(sma, null, 2));
+            return sma.filter(item => item && item.x && (item.y === null || !isNaN(item.y)));
+        }
+
+        function calculateRSI(data, period = 9) {
+            console.log('Calculando RSI para período 9...');
+            console.log('Dados de entrada para RSI:', JSON.stringify(data, null, 2));
+            const rsi = [];
+            const gains = [];
+            const losses = [];
+
+            for (let i = 1; i < data.length; i++) {
+                const prev = data[i - 1] ? data[i - 1].c : null;
+                const curr = data[i] ? data[i].c : null;
+                if (prev === null || curr === null || isNaN(prev) || isNaN(curr)) {
+                    gains.push(0);
+                    losses.push(0);
+                    continue;
+                }
+                const diff = curr - prev;
+                gains.push(diff > 0 ? diff : 0);
+                losses.push(diff < 0 ? -diff : 0);
+            }
+
+            for (let i = 0; i < data.length; i++) {
+                if (!data[i] || !data[i].x || isNaN(data[i].x.getTime())) {
+                    rsi.push({ x: moment().tz('America/Sao_Paulo').subtract((data.length - i) * 5, 'minutes').toDate(), y: null });
+                    continue;
+                }
+                if (i < period) {
+                    rsi.push({ x: moment.tz(data[i].x, 'America/Sao_Paulo').toDate(), y: null });
+                    continue;
+                }
+                const avgGain = gains.slice(i - period + 1, i + 1).reduce((sum, val) => sum + val, 0) / period || 0.0001;
+                const avgLoss = losses.slice(i - period + 1, i + 1).reduce((sum, val) => sum + val, 0) / period || 0.0001;
+                const rs = avgLoss === 0 ? avgGain : avgGain / avgLoss;
+                const rsiValue = 100 - (100 / (1 + rs));
+                rsi.push({ x: moment.tz(data[i].x, 'America/Sao_Paulo').toDate(), y: isNaN(rsiValue) || !isFinite(rsiValue) ? null : Math.max(0, Math.min(100, rsiValue)) });
+            }
+            console.log('RSI bruto:', JSON.stringify(rsi, null, 2));
+            const validRsi = rsi.filter(item => item && item.x instanceof Date && !isNaN(item.x.getTime()) && (item.y === null || (!isNaN(item.y) && isFinite(item.y))));
+            console.log('RSI válido:', JSON.stringify(validRsi, null, 2), 'Contagem:', validRsi.length);
+            if (validRsi.length === 0) {
+                console.warn('Nenhum dado válido para RSI. Usando fallback.');
+                return data.map((item, i) => ({ x: moment.tz(item.x, 'America/Sao_Paulo').toDate(), y: i < period ? null : 50 }));
+            }
+            return validRsi;
+        }
+
+        async function fetchCandlestickData() {
+            console.log('Iniciando fetchCandlestickData...');
+            if (isFetching) {
+                console.warn('Fetch já em progresso, ignorando nova chamada.');
+                return;
+            }
+
+            isFetching = true;
+            const fmpApiKey = 'hyUY6To8bXdJuUQxLCvILqO4wZcjOIZX';
+            const alphaApiKey = 'CFQ7UX5ZKK4CFJA6';
+            const fmpUrl = `https://financialmodelingprep.com/api/v3/historical-chart/5min/EURUSD?apikey=${fmpApiKey}`;
+            const alphaUrl = `https://www.alphavantage.co/query?function=FX_INTRADAY&from_symbol=EUR&to_symbol=USD&interval=5min&outputsize=compact&apikey=${alphaApiKey}`;
+            const loadingDiv = document.getElementById('loading');
+            const errorDiv = document.getElementById('error');
+            const timestampDiv = document.getElementById('timestamp');
+            const updateButton = document.getElementById('updateButton');
+
+            updateButton.disabled = true;
+            loadingDiv.style.display = 'block';
+            errorDiv.style.display = 'none';
+
+            try {
+                let candlestickData = [];
+                let dataSource = 'FMP';
+
+                let response = await fetch(fmpUrl);
+                console.log('FMP Status:', response.status, 'Headers:', response.headers);
+                if (!response.ok) throw new Error(`FMP falhou: ${response.status} ${response.statusText}`);
+
+                let data = await response.json();
+                console.log('Dados FMP recebidos:', JSON.stringify(data, null, 2));
+                if (Array.isArray(data)) {
+                    candlestickData = data.slice(0, 50).reverse().map(item => {
+                        const date = moment.tz(item.date, 'UTC').tz('America/Sao_Paulo').toDate();
+                        console.log(`Convertendo timestamp FMP: ${item.date} -> ${moment(date).format('DD/MM/YYYY HH:mm:ss')}`);
+                        return isNaN(date.getTime()) ? null : {
+                            x: date,
+                            o: parseFloat(item.open) || 0,
+                            h: parseFloat(item.high) || 0,
+                            l: parseFloat(item.low) || 0,
+                            c: parseFloat(item.close) || 0,
+                            v: parseFloat(item.volume || 0) || 1000
+                        };
+                    }).filter(item => item !== null);
+
+                    // Verificar se os dados incluem o horário atual
+                    const latestTime = moment(candlestickData[candlestickData.length - 1]?.x).tz('America/Sao_Paulo');
+                    console.log(`Último horário FMP: ${latestTime.format('DD/MM/YYYY HH:mm:ss')}`);
+                    if (latestTime.isBefore(moment().tz('America/Sao_Paulo').subtract(5, 'minutes'))) {
+                        console.warn('Dados FMP desatualizados. Tentando Alpha Vantage.');
+                    }
+                }
+
+                if (candlestickData.length < 50 || candlestickData[candlestickData.length - 1]?.x < moment().tz('America/Sao_Paulo').subtract(5, 'minutes').toDate()) {
+                    dataSource = 'Alpha Vantage';
+                    response = await fetch(alphaUrl);
+                    console.log('Alpha Vantage Status:', response.status, 'Headers:', response.headers);
+                    if (!response.ok) throw new Error(`Alpha Vantage falhou: ${response.status} ${response.statusText}`);
+                    data = await response.json();
+                    console.log('Dados Alpha Vantage recebidos:', JSON.stringify(data, null, 2));
+                    if (data['Time Series FX (5min)']) {
+                        candlestickData = Object.entries(data['Time Series FX (5min)']).slice(0, 50).map(([date, values]) => {
+                            const parsedDate = moment.tz(date, 'UTC').tz('America/Sao_Paulo').toDate();
+                            console.log(`Convertendo timestamp Alpha: ${date} -> ${moment(parsedDate).format('DD/MM/YYYY HH:mm:ss')}`);
+                            return isNaN(parsedDate.getTime()) ? null : {
+                                x: parsedDate,
+                                o: parseFloat(values['1. open']) || 0,
+                                h: parseFloat(values['2. high']) || 0,
+                                l: parseFloat(values['3. low']) || 0,
+                                c: parseFloat(values['4. close']) || 0,
+                                v: parseFloat(values['5. volume'] || 0) || 1000
+                            };
+                        }).filter(item => item !== null);
+
+                        const latestTime = moment(candlestickData[candlestickData.length - 1]?.x).tz('America/Sao_Paulo');
+                        console.log(`Último horário Alpha: ${latestTime.format('DD/MM/YYYY HH:mm:ss')}`);
+                        if (latestTime.isBefore(moment().tz('America/Sao_Paulo').subtract(5, 'minutes'))) {
+                            console.warn('Dados Alpha Vantage desatualizados. Usando simulação.');
+                        }
+                    }
+                }
+
+                if (candlestickData.length < 50 || candlestickData[candlestickData.length - 1]?.x < moment().tz('America/Sao_Paulo').subtract(5, 'minutes').toDate() || candlestickData.some(item => isNaN(item.o) || isNaN(item.h) || isNaN(item.l) || isNaN(item.c) || isNaN(item.v))) {
+                    dataSource = 'Simulado';
+                    console.warn('Usando dados simulados devido a dados insuficientes, desatualizados ou inválidos.');
+                    const now = moment().tz('America/Sao_Paulo');
+                    candlestickData = Array.from({ length: 50 }, (_, i) => {
+                        const time = moment(now).subtract(i * 5, 'minutes').toDate();
+                        console.log(`Timestamp simulado: ${moment(time).format('DD/MM/YYYY HH:mm:ss')}`);
+                        const base = 1.0850;
+                        return {
+                            x: time,
+                            o: base + (Math.random() - 0.5) * 0.002,
+                            h: base + (Math.random() - 0.5) * 0.002,
+                            l: base + (Math.random() - 0.5) * 0.002,
+                            c: base + (Math.random() - 0.5) * 0.002,
+                            v: Math.floor(Math.random() * 9000) + 1000
+                        };
+                    }).reverse(); // Ordenar do mais antigo para o mais recente
+                }
+
+                // Ajustar lastUpdateTime para o próximo intervalo de 5 minutos
+                const now = moment().tz('America/Sao_Paulo');
+                const minutes = now.minutes();
+                const nextUpdate = moment(now).startOf('hour').add(Math.ceil(minutes / 5) * 5, 'minutes');
+                lastUpdateTime = candlestickData.length > 0 ? candlestickData[candlestickData.length - 1].x : nextUpdate.toDate();
+                console.log('Último timestamp dos dados:', moment(lastUpdateTime).tz('America/Sao_Paulo').format('DD/MM/YYYY HH:mm:ss'));
+
+                console.log('Dados finais para os gráficos:', JSON.stringify(candlestickData, null, 2));
+                const nowFormatted = moment().tz('America/Sao_Paulo').format('DD/MM/YYYY HH:mm:ss [-03:00]');
+                timestampDiv.textContent = `Última consulta: ${nowFormatted} (${dataSource})`;
+                createCharts(candlestickData);
+                console.log('createCharts chamado com sucesso.');
+            } catch (error) {
+                console.error('Erro na fetch:', error.message, 'Stack:', error.stack);
+                loadingDiv.style.display = 'none';
+                errorDiv.style.display = 'block';
+                errorDiv.textContent = `Erro: ${error.message}. Usando dados simulados como fallback.`;
+                lastUpdateTime = moment().tz('America/Sao_Paulo').toDate(); // Fallback para horário atual em caso de erro
+                createCharts(Array.from({ length: 50 }, (_, i) => ({
+                    x: moment().tz('America/Sao_Paulo').subtract((50 - i) * 5, 'minutes').toDate(),
+                    o: 1.0850,
+                    h: 1.0850,
+                    l: 1.0850,
+                    c: 1.0850,
+                    v: 1000
+                })));
+                console.log('createCharts chamado com fallback.');
+            } finally {
+                isFetching = false;
+                updateButton.disabled = false;
+                loadingDiv.style.display = 'none';
+            }
+        }
+
+        function createCharts(data) {
+            console.log('Iniciando createCharts com', data.length, 'velas');
+            if (!data || data.length === 0) {
+                console.error('Dados inválidos ou vazios para os gráficos:', data);
+                document.getElementById('error').style.display = 'block';
+                document.getElementById('error').textContent = 'Erro: Nenhum dado disponível para renderizar os gráficos.';
+                return;
+            }
+
+            // Destruir instâncias anteriores
+            if (candlestickChartInstance) candlestickChartInstance.destroy();
+            if (volumeChartInstance) volumeChartInstance.destroy();
+            if (rsiChartInstance) rsiChartInstance.destroy();
+
+            // Verificar canvases
+            const ctxCandlestick = document.getElementById('candlestickChart')?.getContext('2d');
+            const ctxVolume = document.getElementById('volumeChart')?.getContext('2d');
+            const ctxRsi = document.getElementById('rsiChart')?.getContext('2d');
+            if (!ctxCandlestick || !ctxVolume || !ctxRsi) {
+                console.error('Erro: Canvases não encontrados ou inválidos:', { candlestick: !!ctxCandlestick, volume: !!ctxVolume, rsi: !!ctxRsi });
+                document.getElementById('error').style.display = 'block';
+                document.getElementById('error').textContent = 'Erro: Falha ao inicializar os canvases.';
+                return;
+            }
+
+            // Validar e normalizar dados com fuso horário
+            const validData = data.map(item => {
+                const adjustedDate = moment.tz(item.x, 'America/Sao_Paulo').toDate();
+                console.log(`Normalizando timestamp: ${moment(item.x).format('DD/MM/YYYY HH:mm:ss')} -> ${moment(adjustedDate).format('DD/MM/YYYY HH:mm:ss')}`);
+                return {
+                    x: adjustedDate,
+                    o: typeof item.o === 'number' && !isNaN(item.o) ? item.o : 0,
+                    h: typeof item.h === 'number' && !isNaN(item.h) ? item.h : 0,
+                    l: typeof item.l === 'number' && !isNaN(item.l) ? item.l : 0,
+                    c: typeof item.c === 'number' && !isNaN(item.c) ? item.c : 0,
+                    v: typeof item.v === 'number' && !isNaN(item.v) ? item.v : 1000
+                };
+            }).filter(item => item && item.x instanceof Date && !isNaN(item.x.getTime()));
+            if (validData.length === 0) {
+                console.error('Nenhum dado válido encontrado:', data);
+                document.getElementById('error').style.display = 'block';
+                document.getElementById('error').textContent = 'Erro: Dados inválidos para os gráficos.';
+                return;
+            }
+            console.log('Dados válidos para os gráficos:', JSON.stringify(validData, null, 2));
+
+            const times = validData.map(item => item.x.getTime());
+            const minTime = Math.min(...times) - (Math.max(...times) - Math.min(...times)) * 0.2;
+            const maxTime = Math.max(...times) + (Math.max(...times) - Math.min(...times)) * 0.2;
+            const maxVolume = Math.max(...validData.map(item => item.v), 1000) * 1.2;
+
+            const sma9 = calculateSMA(validData, 9);
+            const sma21 = calculateSMA(validData, 21);
+            const rsi = calculateRSI(validData, 9);
+
+            // Gráfico de velas
+            try {
+                candlestickChartInstance = new Chart(ctxCandlestick, {
+                    type: 'candlestick',
+                    data: {
+                        datasets: [{
+                            label: 'EUR/USD',
+                            data: validData,
+                            borderColor: validData.map(item => item.c >= item.o ? 'rgba(75, 192, 192, 1)' : 'rgba(255, 99, 132, 1)'),
+                            backgroundColor: validData.map(item => item.c >= item.o ? 'rgba(75, 192, 192, 0.5)' : 'rgba(255, 99, 132, 0.5)'),
+                            barPercentage: 0.15
+                        }, ...(sma9.length ? [{ label: 'SMA 9', type: 'line', data: sma9, borderColor: 'rgba(255, 159, 64, 1)', borderWidth: 2, fill: false, pointRadius: 0 }] : []), ...(sma21.length ? [{ label: 'SMA 21', type: 'line', data: sma21, borderColor: 'rgba(153, 102, 255, 1)', borderWidth: 2, fill: false, pointRadius: 0 }] : [])]
+                    },
+                    options: {
+                        scales: {
+                            x: { type: 'time', time: { unit: 'minute', displayFormats: { minute: 'HH:mm' }, stepSize: 5, timezone: 'America/Sao_Paulo' }, min: minTime, max: maxTime, title: { display: true, text: 'Hora' } },
+                            y: { title: { display: true, text: 'Preço (USD)' } }
+                        },
+                        plugins: { legend: { display: false }, zoom: { pan: { enabled: true, mode: 'x' }, zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' } } }
+                    }
+                });
+                console.log('Gráfico de velas criado com ID:', candlestickChartInstance.id);
+            } catch (error) {
+                console.error('Erro ao criar gráfico de velas:', error.message, 'Stack:', error.stack);
+                document.getElementById('error').style.display = 'block';
+                document.getElementById('error').textContent += `\nErro: Falha ao renderizar o gráfico de velas. Detalhes: ${error.message}`;
+            }
+
+            // Gráfico de volume
+            try {
+                volumeChartInstance = new Chart(ctxVolume, {
+                    type: 'bar',
+                    data: { datasets: [{ label: 'Volume', data: validData.map(item => ({ x: item.x, y: item.v })), backgroundColor: 'rgba(54, 162, 235, 0.5)' }] },
+                    options: {
+                        scales: {
+                            x: { type: 'time', time: { unit: 'minute', displayFormats: { minute: 'HH:mm' }, stepSize: 5, timezone: 'America/Sao_Paulo' }, min: minTime, max: maxTime, title: { display: true, text: 'Hora' } },
+                            y: { title: { display: true, text: 'Volume' }, min: 0, suggestedMax: maxVolume }
+                        },
+                        plugins: { legend: { display: false }, zoom: { pan: { enabled: true, mode: 'x' }, zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' } } }
+                    }
+                });
+                console.log('Gráfico de volume criado com ID:', volumeChartInstance.id);
+            } catch (error) {
+                console.error('Erro ao criar gráfico de volume:', error.message, 'Stack:', error.stack);
+                document.getElementById('error').style.display = 'block';
+                document.getElementById('error').textContent += `\nErro: Falha ao renderizar o gráfico de volume. Detalhes: ${error.message}`;
+            }
+
+            // Gráfico de RSI
+            try {
+                console.log('Tentando criar RSI com dados:', JSON.stringify(rsi, null, 2));
+                if (!rsi || rsi.length === 0) {
+                    console.warn('RSI vazio, usando fallback.');
+                    rsi = validData.map((item, i) => ({ x: item.x, y: i < 9 ? null : 50 }));
+                }
+                rsiChartInstance = new Chart(ctxRsi, {
+                    type: 'line',
+                    data: { datasets: [{ label: 'RSI (9)', data: rsi, borderColor: 'rgba(0, 123, 255, 1)', borderWidth: 2, fill: false, pointRadius: 0 }] },
+                    options: {
+                        scales: {
+                            x: { type: 'time', time: { unit: 'minute', displayFormats: { minute: 'HH:mm' }, stepSize: 5, timezone: 'America/Sao_Paulo' }, min: minTime, max: maxTime, title: { display: true, text: 'Hora' } },
+                            y: { title: { display: true, text: 'RSI' }, min: 0, max: 100 }
+                        },
+                        plugins: { legend: { display: false }, zoom: { pan: { enabled: true, mode: 'x' }, zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' } } }
+                    }
+                });
+                console.log('Gráfico de RSI criado com ID:', rsiChartInstance.id);
+            } catch (error) {
+                console.error('Erro ao criar gráfico de RSI:', error.message, 'Stack:', error.stack);
+                document.getElementById('error').style.display = 'block';
+                document.getElementById('error').textContent += `\nErro: Falha ao renderizar o gráfico de RSI. Detalhes: ${error.message}`;
+            }
+
+            // Popular a tabela com as últimas 12 velas
+            const tbody = document.querySelector('#candlesTable tbody');
+            tbody.innerHTML = ''; // Limpar tabela anterior
+            const last12Candles = validData.slice(-12).reverse(); // Últimas 12 velas
+            last12Candles.forEach(item => {
+                const row = document.createElement('tr');
+                const time = moment(item.x).tz('America/Sao_Paulo').format('HH:mm');
+                console.log(`Tabela timestamp: ${time}`);
+                const color = item.c >= item.o ? 'Verde' : 'Vermelha';
+                const sma9Value = sma9.find(s => moment.tz(s.x, 'America/Sao_Paulo').toDate().getTime() === item.x.getTime())?.y || null;
+                const sma21Value = sma21.find(s => moment.tz(s.x, 'America/Sao_Paulo').toDate().getTime() === item.x.getTime())?.y || null;
+                const rsiValue = rsi.find(r => moment.tz(r.x, 'America/Sao_Paulo').toDate().getTime() === item.x.getTime())?.y || null;
+                row.innerHTML = `
+                    <td>${time}</td>
+                    <td>${item.o.toFixed(4)}</td>
+                    <td>${item.h.toFixed(4)}</td>
+                    <td>${item.l.toFixed(4)}</td>
+                    <td>${item.c.toFixed(4)}</td>
+                    <td>${color}</td>
+                    <td>${Math.round(item.v)}</td>
+                    <td>${sma9Value !== null ? sma9Value.toFixed(4) : 'N/A'}</td>
+                    <td>${sma21Value !== null ? sma21Value.toFixed(4) : 'N/A'}</td>
+                    <td>${rsiValue !== null ? Math.round(rsiValue) : 'N/A'}</td>
+                `;
+                tbody.appendChild(row);
+            });
+            console.log('Tabela atualizada com', last12Candles.length, 'velas.');
+        }
+
+        // Carregar dados simulados ao iniciar
+        window.onload = function() {
+            console.log('Página carregada e iniciando processo...');
+            const simulatedData = Array.from({ length: 50 }, (_, i) => {
+                const time = moment().tz('America/Sao_Paulo').subtract(i * 5, 'minutes').toDate();
+                console.log(`Timestamp simulado inicial: ${moment(time).format('DD/MM/YYYY HH:mm:ss')}`);
+                const base = 1.0850;
+                return {
+                    x: time,
+                    o: base + (Math.random() - 0.5) * 0.002,
+                    h: base + (Math.random() - 0.5) * 0.002,
+                    l: base + (Math.random() - 0.5) * 0.002,
+                    c: base + (Math.random() - 0.5) * 0.002,
+                    v: Math.floor(Math.random() * 9000) + 1000
+                };
+            }).reverse(); // Ordenar do mais antigo para o mais recente
+            lastUpdateTime = simulatedData[simulatedData.length - 1].x;
+            createCharts(simulatedData);
+        };
+    </script>
+</body>
+</html>
